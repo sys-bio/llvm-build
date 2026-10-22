@@ -111,7 +111,8 @@ jobs:
           cd "${RUNNER_WORKSPACE}"
           curl -fL -o llvm-project.src.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz"
           mkdir llvm-src
-          tar -xf llvm-project.src.tar.xz -C llvm-src --strip-components=1 --wildcards '*/llvm' '*/cmake' '*/third-party' '*/runtimes'
+          p=llvm-project-${LLVM_VERSION}.src
+          tar -xf llvm-project.src.tar.xz -C llvm-src --strip-components=1 ${p}/llvm ${p}/cmake ${p}/third-party ${p}/runtimes ${p}/libc
           rm llvm-project.src.tar.xz
 
       - name: Disable all tools except llvm-config
