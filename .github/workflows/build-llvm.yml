@@ -1,0 +1,191 @@
+name: BuildLLVM
+
+on:
+  push:
+    tags:
+      - 'llvm-*'
+  pull_request:
+  workflow_dispatch:
+
+env:
+  LLVM_VERSION: "23.1.4"
+
+jobs:
+  build:
+    name: Build LLVM on ${{ matrix.platform.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        platform:
+          - name: macos-15-intel-release
+            os_type: macos
+            os_name: macos-15-intel
+            build_type: Release
+          - name: macos-15-intel-debug
+            os_type: macos
+            os_name: macos-15-intel
+            build_type: Debug
+          - name: macos-14-release
+            os_type: macos
+            os_name: macos-14
+            build_type: Release
+          - name: macos-14-debug
+            os_type: macos
+            os_name: macos-14
+            build_type: Debug
+          - name: ubuntu-latest-release
+            os_type: ubuntu
+            os_name: ubuntu-latest
+            build_type: Release
+          - name: ubuntu-latest-debug
+            os_type: ubuntu
+            os_name: ubuntu-latest
+            build_type: Debug
+          - name: windows-latest-release
+            os_type: windows
+            os_name: windows-latest
+            build_type: Release
+          - name: windows-latest-debug
+            os_type: windows
+            os_name: windows-latest
+            build_type: Debug
+          - name: manylinux_2_28-release
+            os_type: manylinux
+            os_name: ubuntu-latest
+            container_image: quay.io/pypa/manylinux_2_28_x86_64
+            build_type: Release
+          # No manylinux Debug build: the runner runs out of disk space.
+    runs-on: ${{ matrix.platform.os_name }}
+    container:
+      image: ${{ matrix.platform.container_image || '' }}
+
+    steps:
+      - name: Free up disk space for Debug builds
+        if: matrix.platform.build_type == 'Debug' && matrix.platform.os_type == 'ubuntu'
+        shell: bash
+        run: |
+          sudo rm -rf /opt/hostedtoolcache /usr/share/dotnet /usr/local/share/dotnet
+
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set MSVC as the default compiler on Windows
+        if: matrix.platform.os_type == 'windows'
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Install build tools
+        shell: bash
+        run: |
+          if [ "${{ matrix.platform.os_type }}" == 'macos' ]; then
+            brew install ninja
+          elif [ "${{ matrix.platform.os_type }}" == 'ubuntu' ]; then
+            sudo apt-get update
+            sudo apt-get install -y ninja-build
+          elif [ "${{ matrix.platform.os_type }}" == 'manylinux' ]; then
+            dnf install -y zip
+            /opt/python/cp312-cp312/bin/pip install cmake ninja
+            echo "/opt/python/cp312-cp312/bin" >> "${GITHUB_PATH}"
+          fi
+
+      - name: Set names
+        shell: bash
+        run: |
+          host_architecture=$(uname -m)
+          echo "host_architecture=${host_architecture}" >> "${GITHUB_ENV}"
+          if [ "${{ matrix.platform.os_type }}" == 'windows' ]; then
+            compiler_version=$(ls "C:\Program Files\Microsoft Visual Studio")
+            os_and_compiler="windows-msvc${compiler_version}"
+          elif [ "${{ matrix.platform.os_type }}" == 'macos' ]; then
+            os_and_compiler="macos-$(sw_vers -productVersion | cut -d '.' -f 1)"
+          elif [ "${{ matrix.platform.os_type }}" == 'ubuntu' ]; then
+            os_and_compiler="ubuntu-$(lsb_release -rs | cut -d '.' -f 1)"
+          elif [ "${{ matrix.platform.os_type }}" == 'manylinux' ]; then
+            os_name="${{ matrix.platform.name }}"
+            os_and_compiler="${os_name%%-*}"
+          fi
+          echo "artifacts_name=llvm-${LLVM_VERSION}-${os_and_compiler}-${host_architecture}-${{ matrix.platform.build_type }}" >> "${GITHUB_ENV}"
+
+      - name: Download LLVM source
+        shell: bash
+        run: |
+          cd "${RUNNER_WORKSPACE}"
+          curl -fL -o llvm-project.src.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz"
+          mkdir llvm-src
+          tar -xf llvm-project.src.tar.xz -C llvm-src --strip-components=1 --wildcards '*/llvm' '*/cmake' '*/third-party' '*/runtimes'
+          rm llvm-project.src.tar.xz
+
+      - name: Disable all tools except llvm-config
+        shell: bash
+        run: |
+          cd "${RUNNER_WORKSPACE}/llvm-src/llvm/tools"
+          for d in */; do
+            n="${d%/}"
+            [ "$n" = "llvm-config" ] && continue
+            u=$(echo "$n" | tr 'a-z-' 'A-Z_')
+            echo "set(LLVM_TOOL_${u}_BUILD OFF CACHE BOOL \"\")"
+          done > "${RUNNER_WORKSPACE}/tools-off.cmake"
+
+      - name: Configure LLVM
+        shell: bash
+        run: |
+          extra=""
+          if [ "${{ matrix.platform.os_type }}" == 'macos' ]; then
+            extra="-DCMAKE_OSX_ARCHITECTURES=${host_architecture}"
+          fi
+          cmake -S "${RUNNER_WORKSPACE}/llvm-src/llvm" -B "${RUNNER_WORKSPACE}/build-llvm" -G Ninja \
+            -C "${GITHUB_WORKSPACE}/config/llvm-flags.cmake" \
+            -C "${RUNNER_WORKSPACE}/tools-off.cmake" \
+            -DCMAKE_BUILD_TYPE=${{ matrix.platform.build_type }} \
+            -DCMAKE_INSTALL_PREFIX="${RUNNER_WORKSPACE}/install-llvm" \
+            ${extra}
+
+      - name: Build LLVM
+        shell: bash
+        run: cmake --build "${RUNNER_WORKSPACE}/build-llvm"
+
+      - name: Install LLVM
+        shell: bash
+        run: |
+          cmake --install "${RUNNER_WORKSPACE}/build-llvm"
+          chmod a+x "${RUNNER_WORKSPACE}/install-llvm/bin/llvm-config"*
+
+      - name: Package LLVM
+        shell: bash
+        run: |
+          cd "${RUNNER_WORKSPACE}/install-llvm"
+          if [ "${{ matrix.platform.os_type }}" == 'windows' ]; then
+            7z a -tzip "${GITHUB_WORKSPACE}/${artifacts_name}.zip" .
+          else
+            zip -qr "${GITHUB_WORKSPACE}/${artifacts_name}.zip" .
+          fi
+
+      - name: Upload LLVM binaries
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.artifacts_name }}
+          path: ${{ env.artifacts_name }}.zip
+          compression-level: 0
+
+  release:
+    name: Publish release
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/llvm-')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download all builds
+        uses: actions/download-artifact@v4
+        with:
+          pattern: llvm-*
+          merge-multiple: true
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            --repo "${GITHUB_REPOSITORY}" \
+            --title "LLVM ${LLVM_VERSION} for roadrunner (${GITHUB_REF_NAME})" \
+            --notes "LLVM ${LLVM_VERSION} built with RTTI and exceptions enabled. See README for build flags." \
+            llvm-*.zip
