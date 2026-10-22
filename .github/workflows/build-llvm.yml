@@ -112,7 +112,7 @@ jobs:
           curl -fL -o llvm-project.src.tar.xz "https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/llvm-project-${LLVM_VERSION}.src.tar.xz"
           mkdir llvm-src
           p=llvm-project-${LLVM_VERSION}.src
-          tar -xf llvm-project.src.tar.xz -C llvm-src --strip-components=1 ${p}/llvm ${p}/cmake ${p}/third-party ${p}/runtimes ${p}/libc
+          tar -xf llvm-project.src.tar.xz -C llvm-src --strip-components=1 --exclude=${p}/llvm/utils/mlgo-utils/combine_training_corpus.py --exclude=${p}/llvm/utils/mlgo-utils/extract_ir.py --exclude=${p}/llvm/utils/mlgo-utils/make_corpus.py ${p}/llvm ${p}/cmake ${p}/third-party ${p}/runtimes ${p}/libc
           rm llvm-project.src.tar.xz
 
       - name: Disable all tools except llvm-config
