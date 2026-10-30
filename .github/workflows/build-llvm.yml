@@ -25,13 +25,13 @@ jobs:
             os_type: macos
             os_name: macos-15-intel
             build_type: Debug
-          - name: macos-14-release
+          - name: macos-15-release
             os_type: macos
-            os_name: macos-14
+            os_name: macos-15
             build_type: Release
-          - name: macos-14-debug
+          - name: macos-15-debug
             os_type: macos
-            os_name: macos-14
+            os_name: macos-15
             build_type: Debug
           - name: ubuntu-latest-release
             os_type: ubuntu
